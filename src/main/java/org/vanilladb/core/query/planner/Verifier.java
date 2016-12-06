@@ -200,13 +200,16 @@ public class Verifier {
 					+ " does not exist");
 
 		Schema sch = ti.schema();
-		String fieldName = data.fieldName();
-		// examine if column exist
-		if (!sch.hasField(fieldName))
-			throw new BadSemanticException("field " + fieldName
-					+ " does not exist in table " + tableName);
+		List<String> fieldNames = data.fieldNames();
+		for (String fieldName : fieldNames) {
+			// examine if a column exist
+			if (!sch.hasField(fieldName))
+				throw new BadSemanticException("field " + fieldName
+						+ " does not exist in table " + tableName);
+		}
 
 		// examine the index
+		// FIXME: Wait for new APIs of multi-keys indcies
 		Map<String, IndexInfo> indexInfoes = VanillaDb.catalogMgr().getIndexInfo(
 				tableName, tx);
 		if (indexInfoes.containsKey(fieldName))

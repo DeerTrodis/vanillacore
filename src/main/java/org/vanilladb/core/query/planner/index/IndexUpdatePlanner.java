@@ -65,6 +65,7 @@ public class IndexUpdatePlanner implements UpdatePlanner {
 			// first, insert into index
 			IndexInfo ii = indexes.get(fldname);
 			if (ii != null) {
+				// FIXME: Wait for new APIs of multi-keys indcies
 				Index idx = ii.open(tx);
 				idx.insert(val, rid, true);
 				idx.close();
@@ -107,6 +108,7 @@ public class IndexUpdatePlanner implements UpdatePlanner {
 			RecordId rid = s.getRecordId();
 			// delete the record from every index
 			for (String fldname : indexInfoMap.keySet()) {
+				// FIXME: Wait for new APIs of multi-keys indcies
 				Constant val = s.getVal(fldname);
 				Index idx = indexInfoMap.get(fldname).open(tx);
 				idx.delete(val, rid, true);
@@ -182,6 +184,7 @@ public class IndexUpdatePlanner implements UpdatePlanner {
 				// update the appropriate index, if it exists
 				Index idx = targetIdxMap.get(fld);
 				if (idx != null) {
+					// FIXME: Wait for new APIs of multi-keys indcies
 					RecordId rid = s.getRecordId();
 					idx.delete(oldval, rid, true);
 					idx.insert(newval, rid, true);
@@ -217,7 +220,7 @@ public class IndexUpdatePlanner implements UpdatePlanner {
 	@Override
 	public int executeCreateIndex(CreateIndexData data, Transaction tx) {
 		VanillaDb.catalogMgr().createIndex(data.indexName(), data.tableName(),
-				data.fieldName(), data.indexType(), tx);
+				data.fieldNames(), data.indexType(), tx);
 		return 0;
 	}
 }
