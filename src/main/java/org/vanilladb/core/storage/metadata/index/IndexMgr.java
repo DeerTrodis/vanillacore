@@ -20,18 +20,22 @@ import static org.vanilladb.core.sql.Type.VARCHAR;
 import static org.vanilladb.core.storage.metadata.TableMgr.MAX_NAME;
 
 import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 
 import org.vanilladb.core.sql.IntegerConstant;
 import org.vanilladb.core.sql.Schema;
 import org.vanilladb.core.sql.VarcharConstant;
+import org.vanilladb.core.storage.index.IndexType;
 import org.vanilladb.core.storage.metadata.TableInfo;
 import org.vanilladb.core.storage.metadata.TableMgr;
 import org.vanilladb.core.storage.record.RecordFile;
 import org.vanilladb.core.storage.tx.Transaction;
 
 /**
- * The index manager. The index manager has similar functionalty to the table
+ * The index manager. The index manager has similar functionality to the table
  * manager.
  */
 public class IndexMgr {
@@ -41,16 +45,27 @@ public class IndexMgr {
 	public static final String ICAT = "idxcat";
 
 	/**
-	 * A field name of the index catalog.
+	 * The field names of the index catalog.
 	 */
 	public static final String ICAT_IDXNAME = "idxname",
-			ICAT_TBLNAME = "tblname", ICAT_FLDNAME = "fldname",
-			ICAT_IDXTYPE = "idxtype";
+			ICAT_TBLNAME = "tblname", ICAT_IDXTYPE = "idxtype";
+	
+	/**
+	 * Name of the key catalog.
+	 */
+	public static final String KCAT = "idxkeycat";
+	
+	/**
+	 * The field names of the key catalog.
+	 */
+	public static final String KCAT_IDXNAME = "idxname",
+			KCAT_KEYNAME = "keyname";
 
-	private TableInfo ti;
+	private TableInfo iti, kti;
 
 	// Optimization: Materialize the index information
-	private Map<String, Map<String, IndexInfo>> iiMap;
+	// Table Name -> (Field Name -> List of IndexInfos which uses the field)
+	private Map<String, Map<String, List<IndexInfo>>> iiMap;
 
 	/**
 	 * Creates the index manager. This constructor is called during system
@@ -67,13 +82,18 @@ public class IndexMgr {
 			Schema sch = new Schema();
 			sch.addField(ICAT_IDXNAME, VARCHAR(MAX_NAME));
 			sch.addField(ICAT_TBLNAME, VARCHAR(MAX_NAME));
-			sch.addField(ICAT_FLDNAME, VARCHAR(MAX_NAME));
 			sch.addField(ICAT_IDXTYPE, INTEGER);
 			tblMgr.createTable(ICAT, sch, tx);
+			
+			sch = new Schema();
+			sch.addField(KCAT_IDXNAME, VARCHAR(MAX_NAME));
+			sch.addField(KCAT_KEYNAME, VARCHAR(MAX_NAME));
+			tblMgr.createTable(KCAT, sch, tx);
 		}
-		ti = tblMgr.getTableInfo(ICAT, tx);
+		iti = tblMgr.getTableInfo(ICAT, tx);
+		kti = tblMgr.getTableInfo(KCAT, tx);
 
-		iiMap = new HashMap<String, Map<String, IndexInfo>>();
+		iiMap = new HashMap<String, Map<String, List<IndexInfo>>>();
 	}
 
 	/**
@@ -84,65 +104,112 @@ public class IndexMgr {
 	 * @param idxName
 	 *            the name of the index
 	 * @param tblName
-	 *            the name of the indexed table
-	 * @param fldName
-	 *            the name of the indexed field
+	 *            the name of the table
+	 * @param fldNames
+	 *            the list of names of the indexed fields
 	 * @param idxType
-	 *            the index type of the indexed field
+	 *            the type of the index
 	 * @param tx
 	 *            the calling transaction
 	 */
-	public void createIndex(String idxName, String tblName, String fldName,
-			int idxType, Transaction tx) {
-		RecordFile rf = ti.open(tx, true);
+	public void createIndex(String idxName, String tblName, List<String> fldNames,
+			IndexType idxType, Transaction tx) {
+		// Insert the index name, type and the table name into the index catalog
+		RecordFile rf = iti.open(tx, true);
 		rf.insert();
 		rf.setVal(ICAT_IDXNAME, new VarcharConstant(idxName));
 		rf.setVal(ICAT_TBLNAME, new VarcharConstant(tblName));
-		rf.setVal(ICAT_FLDNAME, new VarcharConstant(fldName));
-		rf.setVal(ICAT_IDXTYPE, new IntegerConstant(idxType));
+		rf.setVal(ICAT_IDXTYPE, new IntegerConstant(idxType.toInteger()));
+		rf.close();
+		
+		// Insert the keys of the index into the key catalog
+		rf = kti.open(tx, true);
+		for (String fldName : fldNames) {
+			rf.insert();
+			rf.setVal(KCAT_IDXNAME, new VarcharConstant(idxName));
+			rf.setVal(KCAT_KEYNAME, new VarcharConstant(fldName));
+		}
 		rf.close();
 
 		// update index info map
-		Map<String, IndexInfo> result = iiMap.get(tblName);
-		if (result == null) {
-			result = new HashMap<String, IndexInfo>();
-			iiMap.put(tblName, result);
+		Map<String, List<IndexInfo>> fldToIndexMap = iiMap.get(tblName);
+		IndexInfo ii = new IndexInfo(idxName, tblName, fldNames, idxType);
+		for (String fld : fldNames) {
+			List<IndexInfo> iis = fldToIndexMap.get(fld);
+			if (iis == null) {
+				iis = new LinkedList<IndexInfo>();
+				fldToIndexMap.put(fld, iis);
+			}
+			iis.add(ii);
 		}
-		result.put(fldName, new IndexInfo(idxName, tblName, fldName, idxType));
 	}
 
 	/**
-	 * Returns a map containing the index info for all indexes on the specified
-	 * table.
+	 * Returns the list of IndexInfo of the indices which index the specified field on the
+	 * specified table.
 	 * 
 	 * @param tblName
 	 *            the name of the table
+	 * @param fldName
+	 *            the name of index field
 	 * @param tx
 	 *            the calling transaction
-	 * @return a map of IndexInfo objects, keyed by their field names
+	 * @return a list of IndexInfo objects
 	 */
-	public Map<String, IndexInfo> getIndexInfo(String tblName, Transaction tx) {
-		Map<String, IndexInfo> result = iiMap.get(tblName);
-		if (result != null)
-			return result;
-
+	public List<IndexInfo> getIndexInfo(String tblName, String fldName, Transaction tx) {
+		Map<String, List<IndexInfo>> fldToIndexMap = iiMap.get(tblName);
+		if (fldToIndexMap != null)
+			return fldToIndexMap.get(fldName);
+		
+		// Retrieve the index names and types
+		Map<String, IndexType> idxTypeMap = new HashMap<String, IndexType>();
+		RecordFile rf = iti.open(tx, true);
+		rf.beforeFirst();
+		while (rf.next())
+			if (((String) rf.getVal(ICAT_TBLNAME).asJavaVal()).equals(tblName)) {
+				String idxName = (String) rf.getVal(ICAT_IDXNAME).asJavaVal();
+				int idxType = (Integer) rf.getVal(ICAT_IDXTYPE).asJavaVal();
+				idxTypeMap.put(idxName, IndexType.fromInteger(idxType));
+			}
+		rf.close();
+		
+		// Retrieve the names of keys
+		Map<String, List<String>> fldNamesMap = new HashMap<String, List<String>>();
+		rf = kti.open(tx, true);
+		rf.beforeFirst();
+		while (rf.next()) {
+			String idxName = (String) rf.getVal(KCAT_IDXNAME).asJavaVal();
+			if (idxTypeMap.keySet().contains(idxName)) {
+				List<String> fldNames = fldNamesMap.get(idxName);
+				if (fldNames == null) {
+					fldNames = new LinkedList<String>();
+					fldNamesMap.put(idxName, fldNames);
+				}
+				fldNames.add((String) rf.getVal(KCAT_KEYNAME).asJavaVal());
+			}
+		}
+		
 		/*
 		 * Optimization: store the ii. WARNING: if allowing run-time index
 		 * schema modification, this opt should be aware of the changing.
 		 */
-		result = new HashMap<String, IndexInfo>();
-		RecordFile rf = ti.open(tx, true);
-		rf.beforeFirst();
-		while (rf.next())
-			if (((String) rf.getVal(ICAT_TBLNAME).asJavaVal()).equals(tblName)) {
-				String idxname = (String) rf.getVal(ICAT_IDXNAME).asJavaVal();
-				String fldname = (String) rf.getVal(ICAT_FLDNAME).asJavaVal();
-				int idxtype = (Integer) rf.getVal(ICAT_IDXTYPE).asJavaVal();
-				IndexInfo ii = new IndexInfo(idxname, tblName, fldname, idxtype);
-				result.put(fldname, ii);
+		fldToIndexMap = new HashMap<String, List<IndexInfo>>();
+		for (Entry<String, IndexType> entry : idxTypeMap.entrySet()) {
+			String idxName = entry.getKey();
+			IndexType idxType = entry.getValue();
+			List<String> fldNames = fldNamesMap.get(idxName);
+			IndexInfo ii = new IndexInfo(idxName, tblName, fldNames, idxType);
+			for (String fld : fldNames) {
+				List<IndexInfo> iis = fldToIndexMap.get(fld);
+				if (iis == null) {
+					iis = new LinkedList<IndexInfo>();
+					fldToIndexMap.put(fld, iis);
+				}
+				iis.add(ii);
 			}
-		rf.close();
-		iiMap.put(tblName, result);
-		return result;
+		}
+		iiMap.put(tblName, fldToIndexMap);
+		
+		return fldToIndexMap.get(fldName);
 	}
 }
