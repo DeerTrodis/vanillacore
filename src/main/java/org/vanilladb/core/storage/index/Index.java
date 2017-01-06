@@ -15,6 +15,8 @@
  ******************************************************************************/
 package org.vanilladb.core.storage.index;
 
+import java.util.List;
+
 import org.vanilladb.core.sql.Constant;
 import org.vanilladb.core.sql.ConstantRange;
 import org.vanilladb.core.sql.Type;
@@ -30,11 +32,6 @@ import org.vanilladb.core.storage.tx.Transaction;
  */
 public abstract class Index {
 	/**
-	 * A supported index type.
-	 */
-	public static final int IDX_HASH = 0, IDX_BTREE = 1;
-
-	/**
 	 * Estimates the number of block accesses required to find all index records
 	 * matching a search range, given the specified numbers of total records and
 	 * matching records.
@@ -45,29 +42,38 @@ public abstract class Index {
 	 * 
 	 * @param idxType
 	 *            the index type
-	 * @param fldType
-	 *            the type of the indexed field
+	 * @param keyTypes
+	 *            the list of types of the indexed fields
 	 * @param totRecs
 	 *            the total number of records in the table
 	 * @param matchRecs
 	 *            the number of matching records
 	 * @return the estimated the number of block accesses
 	 */
-	public static long searchCost(int idxType, Type fldType, long totRecs,
-			long matchRecs) {
-		if (idxType == IDX_HASH)
-			return HashIndex.searchCost(fldType, totRecs, matchRecs);
-		else if (idxType == IDX_BTREE)
-			return BTreeIndex.searchCost(fldType, totRecs, matchRecs);
+	public static long searchCost(IndexType idxType, List<Type> keyTypes, long totRecs, long matchRecs) {
+		if (idxType == IndexType.HASH)
+			return HashIndex.searchCost(keyTypes, totRecs, matchRecs);
+		else if (idxType == IndexType.BTREE)
+			return BTreeIndex.searchCost(keyTypes, totRecs, matchRecs);
 		else
 			throw new IllegalArgumentException("unsupported index type");
 	}
 
-	public static Index newInstance(IndexInfo ii, Type fldType, Transaction tx) {
-		if (ii.indexType() == IDX_HASH)
-			return new HashIndex(ii, fldType, tx);
-		else if (ii.indexType() == IDX_BTREE)
-			return new BTreeIndex(ii, fldType, tx);
+	/**
+	 * Create an instance of indices with the specified {@link IndexInfo}.
+	 * 
+	 * @param ii
+	 *            the information of the specified index
+	 * @param tx
+	 *            the calling transaction
+	 * @return
+	 *            the new instance of the index
+	 */
+	public static Index newInstance(IndexInfo ii, List<Type> keyTypes, Transaction tx) {
+		if (ii.indexType() == IndexType.HASH)
+			return new HashIndex(ii, keyTypes, tx);
+		else if (ii.indexType() == IndexType.BTREE)
+			return new BTreeIndex(ii, keyTypes, tx);
 		else
 			throw new IllegalArgumentException("unsupported index type");
 	}
@@ -77,9 +83,9 @@ public abstract class Index {
 	 * range of search keys.
 	 * 
 	 * @param searchRange
-	 *            the range of search keys
+	 *            the list of ranges of search keys
 	 */
-	public abstract void beforeFirst(ConstantRange searchRange);
+	public abstract void beforeFirst(List<ConstantRange> searchRanges);
 
 	/**
 	 * Moves the index to the next record matching the search range specified in
@@ -100,22 +106,22 @@ public abstract class Index {
 	/**
 	 * Inserts an index record having the specified key and data record ID.
 	 * 
-	 * @param key
-	 *            the key in the new index record.
+	 * @param keys
+	 *            the list of indexed keys in the new index record.
 	 * @param dataRecordId
 	 *            the data record ID in the new index record.
 	 */
-	public abstract void insert(Constant key, RecordId dataRecordId, boolean doLogicalLogging);
+	public abstract void insert(List<Constant> keys, RecordId dataRecordId, boolean doLogicalLogging);
 
 	/**
 	 * Deletes the index record having the specified key and data record ID.
 	 * 
-	 * @param key
-	 *            the key of the deleted index record
+	 * @param keys
+	 *            the list of indexed keys in the new index record.
 	 * @param dataRecordId
 	 *            the data record ID of the deleted index record
 	 */
-	public abstract void delete(Constant key, RecordId dataRecordId, boolean doLogicalLogging);
+	public abstract void delete(List<Constant> keys, RecordId dataRecordId, boolean doLogicalLogging);
 
 	/**
 	 * Closes the index.

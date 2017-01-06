@@ -15,9 +15,11 @@
  ******************************************************************************/
 package org.vanilladb.core.storage.metadata.index;
 
+import java.util.LinkedList;
 import java.util.List;
 
 import org.vanilladb.core.server.VanillaDb;
+import org.vanilladb.core.sql.Type;
 import org.vanilladb.core.storage.index.Index;
 import org.vanilladb.core.storage.index.IndexType;
 import org.vanilladb.core.storage.metadata.TableInfo;
@@ -63,13 +65,19 @@ public class IndexInfo {
 		if (ti == null)
 			throw new TableNotFoundException("table '" + tblName
 					+ "' is not defined in catalog.");
-		return Index.newInstance(this, tx);
+		
+		// Create a list of key types
+		LinkedList<Type> keyTypes = new LinkedList<Type>();
+		for (String fldName : fldNames)
+			keyTypes.add(ti.schema().type(fldName));
+		
+		return Index.newInstance(this, keyTypes, tx);
 	}
 
 	/**
-	 * Returns the name of the indexed field.
+	 * Returns the names of the indexed fields.
 	 * 
-	 * @return the name of the indexed filed
+	 * @return the names of the indexed fields
 	 */
 	public List<String> fieldNames() {
 		return fldNames;

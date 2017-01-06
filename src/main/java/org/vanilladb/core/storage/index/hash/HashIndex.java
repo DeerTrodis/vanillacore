@@ -18,6 +18,10 @@ package org.vanilladb.core.storage.index.hash;
 import static org.vanilladb.core.sql.Type.BIGINT;
 import static org.vanilladb.core.sql.Type.INTEGER;
 
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+
 import org.vanilladb.core.server.VanillaDb;
 import org.vanilladb.core.sql.BigIntConstant;
 import org.vanilladb.core.sql.Constant;
@@ -55,8 +59,8 @@ public class HashIndex extends Index {
 				HashIndex.class.getName() + ".NUM_BUCKETS", 100);
 	}
 
-	public static long searchCost(Type fldType, long totRecs, long matchRecs) {
-		int rpb = Buffer.BUFFER_SIZE / RecordPage.slotSize(schema(fldType));
+	public static long searchCost(List<Type> keyTypes, long totRecs, long matchRecs) {
+		int rpb = Buffer.BUFFER_SIZE / RecordPage.slotSize(schema(keyTypes));
 		return (totRecs / rpb) / NUM_BUCKETS;
 	}
 
@@ -68,19 +72,29 @@ public class HashIndex extends Index {
 	 * 
 	 * @return the schema of the index records
 	 */
-	private static Schema schema(Type fldType) {
+	private static Schema schema(List<Type> keyTypes) {
 		Schema sch = new Schema();
-		sch.addField(SCHEMA_KEY, fldType);
+		// XXX: I'am not sure if using "key_0" as the field name of the key
+		// is a good design
+		int count = 0;
+		for (Type fldType : keyTypes) {
+			sch.addField(getKeyFldName(count), fldType);
+			count++;
+		}
 		sch.addField(SCHEMA_RID_BLOCK, BIGINT);
 		sch.addField(SCHEMA_RID_ID, INTEGER);
 		return sch;
 	}
+	
+	private static String getKeyFldName(int keyNum) {
+		return SCHEMA_KEY + '_' + keyNum;
+	}
 
 	private IndexInfo ii;
-	private Type fldType;
+	private List<Type> keyTypes;
 	private String dataFileName;
 	private Transaction tx;
-	private Constant searchKey;
+	private List<Constant> searchKey;
 	private RecordFile rf;
 
 	/**
@@ -93,10 +107,10 @@ public class HashIndex extends Index {
 	 * @param tx
 	 *            the calling transaction
 	 */
-	public HashIndex(IndexInfo ii, Type fldType, Transaction tx) {
+	public HashIndex(IndexInfo ii, List<Type> keyTypes, Transaction tx) {
 		this.ii = ii;
 		this.dataFileName = ii.tableName() + ".tbl";
-		this.fldType = fldType;
+		this.keyTypes = keyTypes;
 		this.tx = tx;
 	}
 
@@ -122,16 +136,20 @@ public class HashIndex extends Index {
 	 * @see Index#beforeFirst(ConstantRange)
 	 */
 	@Override
-	public void beforeFirst(ConstantRange searchRange) {
+	public void beforeFirst(List<ConstantRange> searchRanges) {
 		close();
+		
 		// support the equality query only
-		if (!searchRange.isConstant())
-			throw new UnsupportedOperationException();
-
-		this.searchKey = searchRange.asConstant();
+		this.searchKey = new LinkedList<Constant>();
+		for (ConstantRange range : searchRanges) {
+			if (!range.isConstant())
+				throw new UnsupportedOperationException();
+			searchKey.add(range.asConstant());
+		}
+		
 		int bucket = searchKey.hashCode() % NUM_BUCKETS;
 		String tblname = ii.indexName() + bucket;
-		TableInfo ti = new TableInfo(tblname, schema(fldType));
+		TableInfo ti = new TableInfo(tblname, schema(keyTypes));
 
 		// the underlying record file should not perform logging
 		this.rf = ti.open(tx, false);
@@ -149,9 +167,15 @@ public class HashIndex extends Index {
 	 */
 	@Override
 	public boolean next() {
-		while (rf.next())
-			if (rf.getVal(SCHEMA_KEY).compareTo(searchKey) == 0)
-				return true;
+		while (rf.next()) {
+			int count = 0;
+			for (Constant val : searchKey) {
+				if (rf.getVal(getKeyFldName(count)).compareTo(val) != 0)
+					continue;
+				count++;
+			}
+			return true;
+		}
 		return false;
 	}
 
@@ -173,9 +197,9 @@ public class HashIndex extends Index {
 	 * @see Index#insert(Constant, RecordId, boolean)
 	 */
 	@Override
-	public void insert(Constant key, RecordId dataRecordId, boolean doLogicalLogging) {
+	public void insert(List<Constant> key, RecordId dataRecordId, boolean doLogicalLogging) {
 		// search the position
-		beforeFirst(ConstantRange.newInstance(key));
+		beforeFirst(createSearchRanges(key));
 		
 		// log the logical operation starts
 		if (doLogicalLogging)
@@ -183,14 +207,18 @@ public class HashIndex extends Index {
 		
 		// insert the data
 		rf.insert();
-		rf.setVal(SCHEMA_KEY, key);
+		int count = 0;
+		for (Constant val : key) {
+			rf.setVal(getKeyFldName(count), val);
+			count++;
+		}
 		rf.setVal(SCHEMA_RID_BLOCK, new BigIntConstant(dataRecordId.block()
 				.number()));
 		rf.setVal(SCHEMA_RID_ID, new IntegerConstant(dataRecordId.id()));
 		
 		// log the logical operation ends
 		if (doLogicalLogging)
-			tx.recoveryMgr().logIndexInsertionEnd(ii.tableName(), ii.fieldName(),
+			tx.recoveryMgr().logIndexInsertionEnd(ii.tableName(), ii.fieldNames(),
 					key, dataRecordId.block().number(), dataRecordId.id());
 	}
 
@@ -200,9 +228,9 @@ public class HashIndex extends Index {
 	 * @see Index#delete(Constant, RecordId, boolean)
 	 */
 	@Override
-	public void delete(Constant key, RecordId dataRecordId, boolean doLogicalLogging) {
+	public void delete(List<Constant> key, RecordId dataRecordId, boolean doLogicalLogging) {
 		// search the position
-		beforeFirst(ConstantRange.newInstance(key));
+		beforeFirst(createSearchRanges(key));
 		
 		// log the logical operation starts
 		if (doLogicalLogging)
@@ -217,7 +245,7 @@ public class HashIndex extends Index {
 		
 		// log the logical operation ends
 		if (doLogicalLogging)
-			tx.recoveryMgr().logIndexDeletionEnd(ii.tableName(), ii.fieldName(),
+			tx.recoveryMgr().logIndexDeletionEnd(ii.tableName(), ii.fieldNames(),
 					key, dataRecordId.block().number(), dataRecordId.id());
 	}
 
@@ -240,5 +268,12 @@ public class HashIndex extends Index {
 			throw e;
 		}
 		return VanillaDb.fileMgr().size(fileName);
+	}
+	
+	private List<ConstantRange> createSearchRanges(List<Constant> key) {
+		List<ConstantRange> searchRanges = new LinkedList<ConstantRange>();
+		for (Constant k : key)
+			searchRanges.add(ConstantRange.newInstance(k));
+		return searchRanges;
 	}
 }
