@@ -28,6 +28,9 @@ import org.vanilladb.core.sql.Type;
 import org.vanilladb.core.storage.buffer.Buffer;
 import org.vanilladb.core.storage.file.BlockId;
 import org.vanilladb.core.storage.index.Index;
+import org.vanilladb.core.storage.index.SearchKey;
+import org.vanilladb.core.storage.index.SearchKeyType;
+import org.vanilladb.core.storage.index.SearchRange;
 import org.vanilladb.core.storage.index.btree.BTreeDir.SearchPurpose;
 import org.vanilladb.core.storage.metadata.index.IndexInfo;
 import org.vanilladb.core.storage.record.RecordId;
@@ -46,11 +49,11 @@ public class BTreeIndex extends Index {
 	private BTreeLeaf leaf = null;
 	private BlockId rootBlk;
 	private String dataFileName;
-	private List<Type> keyTypes;
+	private SearchKeyType keyType;
 
-	public static long searchCost(List<Type> keyTypes, long totRecs, long matchRecs) {
-		int dirRpb = Buffer.BUFFER_SIZE / BTreePage.slotSize(BTreeDir.schema(keyTypes));
-		int leafRpb = Buffer.BUFFER_SIZE / BTreePage.slotSize(BTreeLeaf.schema(keyTypes));
+	public static long searchCost(SearchKeyType keyType, long totRecs, long matchRecs) {
+		int dirRpb = Buffer.BUFFER_SIZE / BTreePage.slotSize(BTreeDir.schema(keyType));
+		int leafRpb = Buffer.BUFFER_SIZE / BTreePage.slotSize(BTreeLeaf.schema(keyType));
 		long leafs = (int) Math.ceil((double) totRecs / leafRpb);
 		long matchLeafs = (int) Math.ceil((double) matchRecs / leafRpb);
 		return (long) Math.ceil(Math.log(leafs) / Math.log(dirRpb)) + matchLeafs;
@@ -66,9 +69,9 @@ public class BTreeIndex extends Index {
 	 * @param tx
 	 *            the calling transaction
 	 */
-	public BTreeIndex(IndexInfo ii, List<Type> keyTypes, Transaction tx) {
+	public BTreeIndex(IndexInfo ii, SearchKeyType keyType, Transaction tx) {
 		this.ii = ii;
-		this.keyTypes = keyTypes;
+		this.keyType = keyType;
 		this.dataFileName = ii.tableName() + ".tbl";
 		this.tx = tx;
 		ccMgr = tx.concurrencyMgr();
@@ -76,21 +79,18 @@ public class BTreeIndex extends Index {
 		// Initialize the first leaf block (if it needed)
 		leafFileName = BTreeLeaf.getFileName(ii.indexName());
 		if (fileSize(leafFileName) == 0)
-			appendBlock(leafFileName, BTreeLeaf.schema(keyTypes), new long[] { -1, -1 });
+			appendBlock(leafFileName, BTreeLeaf.schema(keyType), new long[] { -1, -1 });
 
 		// Initialize the first directory block (if it needed)
 		dirFileName = BTreeDir.getFileName(ii.indexName());
 		rootBlk = new BlockId(dirFileName, 0);
 		if (fileSize(dirFileName) == 0)
-			appendBlock(dirFileName, BTreeDir.schema(keyTypes), new long[] { 0 });
+			appendBlock(dirFileName, BTreeDir.schema(keyType), new long[] { 0 });
 		
 		// Insert an initial directory entry (if it needed)
-		BTreeDir rootDir = new BTreeDir(rootBlk, keyTypes, tx);
+		BTreeDir rootDir = new BTreeDir(rootBlk, keyType, tx);
 		if (rootDir.getNumRecords() == 0) {
-			LinkedList<Constant> minVals = new LinkedList<Constant>();
-			for (Type keyType : keyTypes)
-				minVals.add(keyType.minValue());
-			rootDir.insert(new DirEntry(new BTreeKey(minVals), 0));
+			rootDir.insert(new DirEntry(keyType.getMinValue(), 0));
 		}
 		rootDir.close();
 	}
@@ -125,13 +125,11 @@ public class BTreeIndex extends Index {
 	 * @see Index#beforeFirst
 	 */
 	@Override
-	public void beforeFirst(List<ConstantRange> searchRanges) {
-		for (ConstantRange range : searchRanges) {
-			if (!range.isValid())
-				return;
-		}
+	public void beforeFirst(SearchRange searchRange) {
+		if (!searchRange.isValid())
+			return;
 
-		search(searchRanges, SearchPurpose.READ);
+		search(searchRange, SearchPurpose.READ);
 	}
 
 	/**
@@ -168,13 +166,13 @@ public class BTreeIndex extends Index {
 	 * @see Index#insert(Constant, RecordId, boolean)
 	 */
 	@Override
-	public void insert(List<Constant> key, RecordId dataRecordId, boolean doLogicalLogging) {
+	public void insert(SearchKey key, RecordId dataRecordId, boolean doLogicalLogging) {
 		if (tx.isReadOnly())
 			throw new UnsupportedOperationException();
 		
 		// search leaf block for insertion
-		List<ConstantRange> searchRanges = createSearchRanges(key);
-		List<BlockId> dirsMayBeUpdated = search(searchRanges, SearchPurpose.INSERT);
+		SearchRange searchRange = key.toSearchRange();
+		List<BlockId> dirsMayBeUpdated = search(searchRange, SearchPurpose.INSERT);
 		DirEntry newEntry = leaf.insert(dataRecordId);
 		leaf.close();
 		if (newEntry == null)
@@ -188,14 +186,14 @@ public class BTreeIndex extends Index {
 		ListIterator<BlockId> iter = dirsMayBeUpdated.listIterator(dirsMayBeUpdated.size() - 1);
 		while (iter.hasPrevious()) {
 			BlockId dirBlk = iter.previous();
-			BTreeDir dir = new BTreeDir(dirBlk, keyTypes, tx);
+			BTreeDir dir = new BTreeDir(dirBlk, keyType, tx);
 			newEntry = dir.insert(newEntry);
 			dir.close();
 			if (newEntry == null)
 				break;
 		}
 		if (newEntry != null) {
-			BTreeDir root = new BTreeDir(rootBlk, keyTypes, tx);
+			BTreeDir root = new BTreeDir(rootBlk, keyType, tx);
 			root.makeNewRoot(newEntry);
 			root.close();
 		}
@@ -215,12 +213,12 @@ public class BTreeIndex extends Index {
 	 * @see Index#delete(Constant, RecordId, boolean)
 	 */
 	@Override
-	public void delete(List<Constant> key, RecordId dataRecordId, boolean doLogicalLogging) {
+	public void delete(SearchKey key, RecordId dataRecordId, boolean doLogicalLogging) {
 		if (tx.isReadOnly())
 			throw new UnsupportedOperationException();
 		
-		List<ConstantRange> searchRanges = createSearchRanges(key);
-		search(searchRanges, SearchPurpose.DELETE);
+		SearchRange searchRange = key.toSearchRange();
+		search(searchRange, SearchPurpose.DELETE);
 		
 		// log the logical operation starts
 		if (doLogicalLogging)
@@ -249,26 +247,22 @@ public class BTreeIndex extends Index {
 		ccMgr.releaseIndexLocks();
 	}
 
-	private List<BlockId> search(List<ConstantRange> searchRanges, SearchPurpose purpose) {
+	private List<BlockId> search(SearchRange searchRange, SearchPurpose purpose) {
 		close();
 		BlockId leafblk;
-		BTreeDir root = new BTreeDir(rootBlk, keyTypes, tx);
+		BTreeDir root = new BTreeDir(rootBlk, keyType, tx);
 		
 		// Create the list of lower bounds
 		List<Constant> lowerBounds = new LinkedList<Constant>();
-		Iterator<ConstantRange> rangeIter = searchRanges.iterator();
-		Iterator<Type> typeIter = keyTypes.iterator();
-		while (rangeIter.hasNext()) {
-			ConstantRange range = rangeIter.next();
-			Type type = typeIter.next();
-			if (range.hasLowerBound())
-				lowerBounds.add(range.low());
+		for (int i = 0; i < keyType.getNumOfFields(); i++) {
+			if (searchRange.get(i).hasLowerBound())
+				lowerBounds.add(searchRange.get(i).low());
 			else
-				lowerBounds.add(type.minValue());
+				lowerBounds.add(keyType.get(i).minValue());
 		}
 		
 		// Search the B-Tree
-		BTreeKey searchKey = new BTreeKey(lowerBounds);
+		SearchKey searchKey = new SearchKey(lowerBounds);
 		leafblk = root.search(searchKey, leafFileName, purpose);
 
 		// get the dir list for update
@@ -278,7 +272,7 @@ public class BTreeIndex extends Index {
 		root.close();
 
 		// read leaf block
-		leaf = new BTreeLeaf(dataFileName, leafblk, keyTypes, searchRanges, tx);
+		leaf = new BTreeLeaf(dataFileName, leafblk, keyType, searchRange, tx);
 		
 		// Return the dir list for updates
 		return dirsMayBeUpdated;
@@ -307,12 +301,5 @@ public class BTreeIndex extends Index {
 		tx.bufferMgr().unpin(buff);
 
 		return buff.block();
-	}
-	
-	private List<ConstantRange> createSearchRanges(List<Constant> key) {
-		List<ConstantRange> searchRanges = new LinkedList<ConstantRange>();
-		for (Constant k : key)
-			searchRanges.add(ConstantRange.newInstance(k));
-		return searchRanges;
 	}
 }

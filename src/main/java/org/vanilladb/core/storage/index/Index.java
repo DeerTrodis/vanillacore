@@ -15,11 +15,6 @@
  ******************************************************************************/
 package org.vanilladb.core.storage.index;
 
-import java.util.List;
-
-import org.vanilladb.core.sql.Constant;
-import org.vanilladb.core.sql.ConstantRange;
-import org.vanilladb.core.sql.Type;
 import org.vanilladb.core.storage.index.btree.BTreeIndex;
 import org.vanilladb.core.storage.index.hash.HashIndex;
 import org.vanilladb.core.storage.metadata.index.IndexInfo;
@@ -50,11 +45,11 @@ public abstract class Index {
 	 *            the number of matching records
 	 * @return the estimated the number of block accesses
 	 */
-	public static long searchCost(IndexType idxType, List<Type> keyTypes, long totRecs, long matchRecs) {
+	public static long searchCost(IndexType idxType, SearchKeyType keyType, long totRecs, long matchRecs) {
 		if (idxType == IndexType.HASH)
-			return HashIndex.searchCost(keyTypes, totRecs, matchRecs);
+			return HashIndex.searchCost(keyType, totRecs, matchRecs);
 		else if (idxType == IndexType.BTREE)
-			return BTreeIndex.searchCost(keyTypes, totRecs, matchRecs);
+			return BTreeIndex.searchCost(keyType, totRecs, matchRecs);
 		else
 			throw new IllegalArgumentException("unsupported index type");
 	}
@@ -69,11 +64,11 @@ public abstract class Index {
 	 * @return
 	 *            the new instance of the index
 	 */
-	public static Index newInstance(IndexInfo ii, List<Type> keyTypes, Transaction tx) {
+	public static Index newInstance(IndexInfo ii, SearchKeyType keyType, Transaction tx) {
 		if (ii.indexType() == IndexType.HASH)
-			return new HashIndex(ii, keyTypes, tx);
+			return new HashIndex(ii, keyType, tx);
 		else if (ii.indexType() == IndexType.BTREE)
-			return new BTreeIndex(ii, keyTypes, tx);
+			return new BTreeIndex(ii, keyType, tx);
 		else
 			throw new IllegalArgumentException("unsupported index type");
 	}
@@ -85,7 +80,7 @@ public abstract class Index {
 	 * @param searchRange
 	 *            the list of ranges of search keys
 	 */
-	public abstract void beforeFirst(List<ConstantRange> searchRanges);
+	public abstract void beforeFirst(SearchRange searchRange);
 
 	/**
 	 * Moves the index to the next record matching the search range specified in
@@ -111,7 +106,7 @@ public abstract class Index {
 	 * @param dataRecordId
 	 *            the data record ID in the new index record.
 	 */
-	public abstract void insert(List<Constant> keys, RecordId dataRecordId, boolean doLogicalLogging);
+	public abstract void insert(SearchKey key, RecordId dataRecordId, boolean doLogicalLogging);
 
 	/**
 	 * Deletes the index record having the specified key and data record ID.
@@ -121,7 +116,7 @@ public abstract class Index {
 	 * @param dataRecordId
 	 *            the data record ID of the deleted index record
 	 */
-	public abstract void delete(List<Constant> keys, RecordId dataRecordId, boolean doLogicalLogging);
+	public abstract void delete(SearchKey key, RecordId dataRecordId, boolean doLogicalLogging);
 
 	/**
 	 * Closes the index.

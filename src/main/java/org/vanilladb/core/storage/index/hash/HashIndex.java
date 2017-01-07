@@ -18,7 +18,6 @@ package org.vanilladb.core.storage.index.hash;
 import static org.vanilladb.core.sql.Type.BIGINT;
 import static org.vanilladb.core.sql.Type.INTEGER;
 
-import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -28,10 +27,12 @@ import org.vanilladb.core.sql.Constant;
 import org.vanilladb.core.sql.ConstantRange;
 import org.vanilladb.core.sql.IntegerConstant;
 import org.vanilladb.core.sql.Schema;
-import org.vanilladb.core.sql.Type;
 import org.vanilladb.core.storage.buffer.Buffer;
 import org.vanilladb.core.storage.file.BlockId;
 import org.vanilladb.core.storage.index.Index;
+import org.vanilladb.core.storage.index.SearchKey;
+import org.vanilladb.core.storage.index.SearchKeyType;
+import org.vanilladb.core.storage.index.SearchRange;
 import org.vanilladb.core.storage.metadata.TableInfo;
 import org.vanilladb.core.storage.metadata.index.IndexInfo;
 import org.vanilladb.core.storage.record.RecordFile;
@@ -59,8 +60,8 @@ public class HashIndex extends Index {
 				HashIndex.class.getName() + ".NUM_BUCKETS", 100);
 	}
 
-	public static long searchCost(List<Type> keyTypes, long totRecs, long matchRecs) {
-		int rpb = Buffer.BUFFER_SIZE / RecordPage.slotSize(schema(keyTypes));
+	public static long searchCost(SearchKeyType keyType, long totRecs, long matchRecs) {
+		int rpb = Buffer.BUFFER_SIZE / RecordPage.slotSize(schema(keyType));
 		return (totRecs / rpb) / NUM_BUCKETS;
 	}
 
@@ -72,15 +73,12 @@ public class HashIndex extends Index {
 	 * 
 	 * @return the schema of the index records
 	 */
-	private static Schema schema(List<Type> keyTypes) {
+	private static Schema schema(SearchKeyType keyType) {
 		Schema sch = new Schema();
 		// XXX: I'am not sure if using "key_0" as the field name of the key
 		// is a good design
-		int count = 0;
-		for (Type fldType : keyTypes) {
-			sch.addField(getKeyFldName(count), fldType);
-			count++;
-		}
+		for (int i = 0; i < keyType.getNumOfFields(); i++)
+			sch.addField(getKeyFldName(i), keyType.get(i));
 		sch.addField(SCHEMA_RID_BLOCK, BIGINT);
 		sch.addField(SCHEMA_RID_ID, INTEGER);
 		return sch;
@@ -91,10 +89,10 @@ public class HashIndex extends Index {
 	}
 
 	private IndexInfo ii;
-	private List<Type> keyTypes;
+	private SearchKeyType keyType;
 	private String dataFileName;
 	private Transaction tx;
-	private List<Constant> searchKey;
+	private SearchKey searchKey;
 	private RecordFile rf;
 
 	/**
@@ -107,10 +105,10 @@ public class HashIndex extends Index {
 	 * @param tx
 	 *            the calling transaction
 	 */
-	public HashIndex(IndexInfo ii, List<Type> keyTypes, Transaction tx) {
+	public HashIndex(IndexInfo ii, SearchKeyType keyType, Transaction tx) {
 		this.ii = ii;
 		this.dataFileName = ii.tableName() + ".tbl";
-		this.keyTypes = keyTypes;
+		this.keyType = keyType;
 		this.tx = tx;
 	}
 
@@ -136,20 +134,17 @@ public class HashIndex extends Index {
 	 * @see Index#beforeFirst(ConstantRange)
 	 */
 	@Override
-	public void beforeFirst(List<ConstantRange> searchRanges) {
+	public void beforeFirst(SearchRange searchRange) {
 		close();
 		
 		// support the equality query only
-		this.searchKey = new LinkedList<Constant>();
-		for (ConstantRange range : searchRanges) {
-			if (!range.isConstant())
-				throw new UnsupportedOperationException();
-			searchKey.add(range.asConstant());
-		}
+		if (!searchRange.isEqualitySearch())
+			throw new UnsupportedOperationException();
+		searchKey = searchRange.toSearchKey();
 		
 		int bucket = searchKey.hashCode() % NUM_BUCKETS;
 		String tblname = ii.indexName() + bucket;
-		TableInfo ti = new TableInfo(tblname, schema(keyTypes));
+		TableInfo ti = new TableInfo(tblname, schema(keyType));
 
 		// the underlying record file should not perform logging
 		this.rf = ti.open(tx, false);
@@ -168,13 +163,15 @@ public class HashIndex extends Index {
 	@Override
 	public boolean next() {
 		while (rf.next()) {
-			int count = 0;
-			for (Constant val : searchKey) {
-				if (rf.getVal(getKeyFldName(count)).compareTo(val) != 0)
-					continue;
-				count++;
-			}
-			return true;
+			boolean match = true;
+			for (int i = 0; i < searchKey.getNumOfFields(); i++)
+				if (rf.getVal(getKeyFldName(i)).compareTo(searchKey.get(i)) != 0) {
+					match = false;
+					break;
+				}
+			
+			if (match)
+				return true;
 		}
 		return false;
 	}
@@ -197,9 +194,9 @@ public class HashIndex extends Index {
 	 * @see Index#insert(Constant, RecordId, boolean)
 	 */
 	@Override
-	public void insert(List<Constant> key, RecordId dataRecordId, boolean doLogicalLogging) {
+	public void insert(SearchKey key, RecordId dataRecordId, boolean doLogicalLogging) {
 		// search the position
-		beforeFirst(createSearchRanges(key));
+		beforeFirst(key.toSearchRange());
 		
 		// log the logical operation starts
 		if (doLogicalLogging)
@@ -207,11 +204,8 @@ public class HashIndex extends Index {
 		
 		// insert the data
 		rf.insert();
-		int count = 0;
-		for (Constant val : key) {
-			rf.setVal(getKeyFldName(count), val);
-			count++;
-		}
+		for (int i = 0; i < key.getNumOfFields(); i++)
+			rf.setVal(getKeyFldName(i), key.get(i));
 		rf.setVal(SCHEMA_RID_BLOCK, new BigIntConstant(dataRecordId.block()
 				.number()));
 		rf.setVal(SCHEMA_RID_ID, new IntegerConstant(dataRecordId.id()));
@@ -228,9 +222,9 @@ public class HashIndex extends Index {
 	 * @see Index#delete(Constant, RecordId, boolean)
 	 */
 	@Override
-	public void delete(List<Constant> key, RecordId dataRecordId, boolean doLogicalLogging) {
+	public void delete(SearchKey key, RecordId dataRecordId, boolean doLogicalLogging) {
 		// search the position
-		beforeFirst(createSearchRanges(key));
+		beforeFirst(key.toSearchRange());
 		
 		// log the logical operation starts
 		if (doLogicalLogging)
@@ -268,12 +262,5 @@ public class HashIndex extends Index {
 			throw e;
 		}
 		return VanillaDb.fileMgr().size(fileName);
-	}
-	
-	private List<ConstantRange> createSearchRanges(List<Constant> key) {
-		List<ConstantRange> searchRanges = new LinkedList<ConstantRange>();
-		for (Constant k : key)
-			searchRanges.add(ConstantRange.newInstance(k));
-		return searchRanges;
 	}
 }

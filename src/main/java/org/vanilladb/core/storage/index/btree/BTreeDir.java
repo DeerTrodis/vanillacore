@@ -27,6 +27,8 @@ import org.vanilladb.core.sql.Constant;
 import org.vanilladb.core.sql.Schema;
 import org.vanilladb.core.sql.Type;
 import org.vanilladb.core.storage.file.BlockId;
+import org.vanilladb.core.storage.index.SearchKey;
+import org.vanilladb.core.storage.index.SearchKeyType;
 import org.vanilladb.core.storage.tx.Transaction;
 import org.vanilladb.core.storage.tx.concurrency.ConcurrencyMgr;
 import org.vanilladb.core.storage.tx.concurrency.LockAbortException;
@@ -43,7 +45,7 @@ public class BTreeDir {
 	/**
 	 * A field name of the schema of B-tree directory records.
 	 */
-	static final String SCH_KEY = "key", SCH_CHILD = "child";
+	static final String SCH_CHILD = "child";
 
 	static final int NUM_FLAGS = 1;
 
@@ -53,10 +55,10 @@ public class BTreeDir {
 		READ, INSERT, DELETE
 	};
 
-	public static void insertASlot(Transaction tx, String indexFileName, List<Type> keyTypes, long blkNum, int slotId) {
+	public static void insertASlot(Transaction tx, String indexFileName, SearchKeyType keyType, long blkNum, int slotId) {
 		// Open the specified directory
 		BlockId blk = new BlockId(indexFileName, blkNum);
-		BTreeDir dir = new BTreeDir(blk, keyTypes, tx);
+		BTreeDir dir = new BTreeDir(blk, keyType, tx);
 
 		// Insert the specified slot
 		dir.currentPage.insert(slotId);
@@ -65,10 +67,10 @@ public class BTreeDir {
 		dir.close();
 	}
 
-	public static void deleteASlot(Transaction tx, String indexFileName, List<Type> keyTypes, long blkNum, int slotId) {
+	public static void deleteASlot(Transaction tx, String indexFileName, SearchKeyType keyType, long blkNum, int slotId) {
 		// Open the specified directory
 		BlockId blk = new BlockId(indexFileName, blkNum);
-		BTreeDir dir = new BTreeDir(blk, keyTypes, tx);
+		BTreeDir dir = new BTreeDir(blk, keyType, tx);
 
 		// Delete the specified slot
 		dir.currentPage.delete(slotId);
@@ -81,10 +83,6 @@ public class BTreeDir {
 		return indexName + FILENAME_POSTFIX;
 	}
 
-	static String getKeyFldName(int keyNum) {
-		return SCH_KEY + '_' + keyNum;
-	}
-
 	/**
 	 * Returns the schema of the B-tree directory records.
 	 * 
@@ -94,39 +92,33 @@ public class BTreeDir {
 	 * 
 	 * @return the schema of the index records
 	 */
-	static Schema schema(List<Type> keyTypes) {
+	static Schema schema(SearchKeyType keyType) {
 		Schema sch = new Schema();
 		// XXX: I'am not sure if using "key_0" as the field name of the key
 		// is a good design
-		int count = 0;
-		for (Type fldType : keyTypes) {
-			sch.addField(getKeyFldName(count), fldType);
-			count++;
-		}
+		for (int i = 0; i < keyType.getNumOfFields(); i++)
+			sch.addField(BTreeKeyReader.getKeyFldName(i), keyType.get(i));
 		sch.addField(SCH_CHILD, BIGINT);
 		return sch;
 	}
 
-	static long getLevelFlag(BTreePage p) {
+	private static long getLevelFlag(BTreePage p) {
 		return p.getFlag(0);
 	}
 
-	static void setLevelFlag(BTreePage p, long val) {
+	private static void setLevelFlag(BTreePage p, long val) {
 		p.setFlag(0, val);
 	}
 
-	static long getChildBlockNumber(BTreePage p, int slot) {
+	private static long getChildBlockNumber(BTreePage p, int slot) {
 		return (Long) p.getVal(slot, SCH_CHILD).asJavaVal();
 	}
 
-	private static BTreeKey getKey(BTreePage p, int slot, int numOfFlds) {
-		List<Constant> valsOfKey = new LinkedList<Constant>();
-		for (int i = 0; i < numOfFlds; i++)
-			valsOfKey.add(p.getVal(slot, getKeyFldName(i)));
-		return new BTreeKey(valsOfKey);
+	private static SearchKey getKey(BTreePage page, int slot, int numOfFlds) {
+		return new SearchKey(new BTreeKeyReader(page, slot, numOfFlds), numOfFlds);
 	}
 
-	private List<Type> keyTypes;
+	private SearchKeyType keyType;
 	private Schema schema;
 	private Transaction tx;
 	private ConcurrencyMgr ccMgr;
@@ -145,11 +137,11 @@ public class BTreeDir {
 	 * @param tx
 	 *            the calling transaction
 	 */
-	BTreeDir(BlockId blk, List<Type> keyTypes, Transaction tx) {
-		this.keyTypes = keyTypes;
-		this.numOfFlds = keyTypes.size();
+	BTreeDir(BlockId blk, SearchKeyType keyType, Transaction tx) {
+		this.keyType = keyType;
+		this.numOfFlds = keyType.getNumOfFields();
 		this.tx = tx;
-		this.schema = schema(keyTypes);
+		this.schema = schema(keyType);
 		ccMgr = tx.concurrencyMgr();
 		currentPage = new BTreePage(blk, NUM_FLAGS, schema, tx);
 	}
@@ -173,7 +165,7 @@ public class BTreeDir {
 	 *            the file name of the B-tree leaf file
 	 * @return the BlockId of the leaf block containing that search key
 	 */
-	public BlockId search(BTreeKey searchKey, String leafFileName, SearchPurpose purpose) {
+	public BlockId search(SearchKey searchKey, String leafFileName, SearchPurpose purpose) {
 		switch (purpose) {
 		case READ:
 			return searchForRead(searchKey, leafFileName);
@@ -208,7 +200,7 @@ public class BTreeDir {
 			currentPage.close();
 			currentPage = new BTreePage(new BlockId(currentPage.currentBlk().fileName(), 0), NUM_FLAGS, schema, tx);
 		}
-		BTreeKey firstKey = getKey(currentPage, 0, numOfFlds);
+		SearchKey firstKey = getKey(currentPage, 0, numOfFlds);
 		long level = getLevelFlag(currentPage);
 		// split() will create a new page and transfer the entries to the new
 		// page
@@ -240,7 +232,7 @@ public class BTreeDir {
 		// more precisely, create a new page and transfer the second half of
 		// entries to the new page
 		int cuttingPoint = currentPage.getNumRecords() / 2;
-		BTreeKey splitVal = getKey(currentPage, cuttingPoint, numOfFlds);
+		SearchKey splitVal = getKey(currentPage, cuttingPoint, numOfFlds);
 		long newBlkNum = currentPage.split(cuttingPoint, new long[] { getLevelFlag(currentPage) });
 		return new DirEntry(splitVal, newBlkNum);
 	}
@@ -254,7 +246,7 @@ public class BTreeDir {
 		return currentPage.getNumRecords();
 	}
 
-	private BlockId searchForInsert(BTreeKey searchKey, String leafFileName) {
+	private BlockId searchForInsert(SearchKey searchKey, String leafFileName) {
 		try {
 			// search from root to level 0 (the lowest directory block)
 			dirsMayBeUpdated = new ArrayList<BlockId>();
@@ -298,7 +290,7 @@ public class BTreeDir {
 	
 	// Note that we do not modify directories during deletion so that
 	// we do not need to acquire exclusive locks on directories. 
-	private BlockId searchForDelete(BTreeKey searchKey, String leafFileName) {
+	private BlockId searchForDelete(SearchKey searchKey, String leafFileName) {
 		try {
 			// search from root to level 0 (the lowest directory block)
 			BlockId parentBlk = currentPage.currentBlk();
@@ -334,7 +326,7 @@ public class BTreeDir {
 		}
 	}
 
-	private BlockId searchForRead(BTreeKey searchKey, String leafFileName) {
+	private BlockId searchForRead(SearchKey searchKey, String leafFileName) {
 		try {
 			// search from root to level 0 (the lowest directory block)
 			BlockId parentBlk = currentPage.currentBlk();
@@ -370,7 +362,7 @@ public class BTreeDir {
 		}
 	}
 
-	private long findChildBlockNumber(BTreeKey searchKey) {
+	private long findChildBlockNumber(SearchKey searchKey) {
 		int slot = findSlotBefore(searchKey);
 		if (getKey(currentPage, slot + 1, numOfFlds).equals(searchKey))
 			slot++;
@@ -384,7 +376,7 @@ public class BTreeDir {
 	 *            the search key
 	 * @return the position before where the search key goes
 	 */
-	private int findSlotBefore(BTreeKey searchKey) {
+	private int findSlotBefore(SearchKey searchKey) {
 //		int slot = 0;
 //		while (slot < contents.getNumRecords() &&
 //				getKey(contents, slot).compareTo(searchKey) < 0)
@@ -415,19 +407,15 @@ public class BTreeDir {
 			return -1;
 	}
 
-	private void insert(int slot, BTreeKey key, long blkNum) {
+	private void insert(int slot, SearchKey key, long blkNum) {
 		// Insert an entry to the page
-		tx.recoveryMgr().logIndexPageInsertion(currentPage.currentBlk().fileName(), false, keyTypes,
+		tx.recoveryMgr().logIndexPageInsertion(currentPage.currentBlk().fileName(), false, keyType,
 				currentPage.currentBlk().number(), slot);
 		currentPage.insert(slot);
 
 		// Set the contents
-		int count = 0;
-		Iterator<Constant> keyIter = key.getIterator();
-		while (keyIter.hasNext()) {
-			currentPage.setVal(slot, getKeyFldName(count), keyIter.next());
-			count++;
-		}
+		for (int i = 0; i < numOfFlds; i++)
+			currentPage.setVal(slot, BTreeKeyReader.getKeyFldName(i), key.get(i));
 		currentPage.setVal(slot, SCH_CHILD, new BigIntConstant(blkNum));
 	}
 }

@@ -29,6 +29,9 @@ import org.vanilladb.core.sql.IntegerConstant;
 import org.vanilladb.core.sql.Schema;
 import org.vanilladb.core.sql.Type;
 import org.vanilladb.core.storage.file.BlockId;
+import org.vanilladb.core.storage.index.SearchKey;
+import org.vanilladb.core.storage.index.SearchKeyType;
+import org.vanilladb.core.storage.index.SearchRange;
 import org.vanilladb.core.storage.record.RecordId;
 import org.vanilladb.core.storage.tx.Transaction;
 import org.vanilladb.core.storage.tx.concurrency.ConcurrencyMgr;
@@ -56,16 +59,16 @@ public class BTreeLeaf {
 	/**
 	 * A field name of the schema of B-tree leaf records.
 	 */
-	static final String SCH_KEY = "key", SCH_RID_BLOCK = "block", SCH_RID_ID = "id";
+	static final String SCH_RID_BLOCK = "block", SCH_RID_ID = "id";
 
 	static final int NUM_FLAGS = 2;
 	
 	private static final String FILENAME_POSTFIX = "_leaf.idx";
 	
-	public static void insertASlot(Transaction tx, String indexFileName, List<Type> keyTypes,
+	public static void insertASlot(Transaction tx, String indexFileName, SearchKeyType keyType,
 			long blkNum, int slotId) {
 		// Open the specified leaf
-		BTreeLeaf dir = new BTreeLeaf(indexFileName, keyTypes, blkNum, tx);
+		BTreeLeaf dir = new BTreeLeaf(indexFileName, keyType, blkNum, tx);
 
 		// Insert the specified slot
 		dir.currentPage.insert(slotId);
@@ -74,10 +77,10 @@ public class BTreeLeaf {
 		dir.close();
 	}
 	
-	public static void deleteASlot(Transaction tx, String indexFileName, List<Type> keyTypes,
+	public static void deleteASlot(Transaction tx, String indexFileName, SearchKeyType keyType,
 			long blkNum, int slotId) {
 		// Open the specified leaf
-		BTreeLeaf dir = new BTreeLeaf(indexFileName, keyTypes, blkNum, tx);
+		BTreeLeaf dir = new BTreeLeaf(indexFileName, keyType, blkNum, tx);
 
 		// Delete the specified slot
 		dir.currentPage.delete(slotId);
@@ -89,10 +92,6 @@ public class BTreeLeaf {
 	public static String getFileName(String indexName) {
 		return indexName + FILENAME_POSTFIX;
 	}
-	
-	static String getKeyFldName(int keyNum) {
-		return SCH_KEY + '_' + keyNum;
-	}
 
 	/**
 	 * Returns the schema of the B-tree leaf records.
@@ -102,54 +101,48 @@ public class BTreeLeaf {
 	 * 
 	 * @return the schema of the index records
 	 */
-	static Schema schema(List<Type> keyTypes) {
+	static Schema schema(SearchKeyType keyType) {
 		Schema sch = new Schema();
 		// XXX: I'am not sure if using "key_0" as the field name of the key
 		// is a good design
-		int count = 0;
-		for (Type fldType : keyTypes) {
-			sch.addField(getKeyFldName(count), fldType);
-			count++;
-		}
+		for (int i = 0; i < keyType.getNumOfFields(); i++)
+			sch.addField(BTreeKeyReader.getKeyFldName(i), keyType.get(i));
 		sch.addField(SCH_RID_BLOCK, BIGINT);
 		sch.addField(SCH_RID_ID, INTEGER);
 		return sch;
 	}
 
-	static long getOverflowFlag(BTreePage p) {
+	private static long getOverflowFlag(BTreePage p) {
 		return p.getFlag(0);
 	}
 
-	static void setOverflowFlag(BTreePage p, long val) {
+	private static void setOverflowFlag(BTreePage p, long val) {
 		p.setFlag(0, val);
 	}
 
-	static long getSiblingFlag(BTreePage p) {
+	private static long getSiblingFlag(BTreePage p) {
 		return p.getFlag(1);
 	}
 
-	static void setSiblingFlag(BTreePage p, long val) {
+	private static void setSiblingFlag(BTreePage p, long val) {
 		p.setFlag(1, val);
 	}
 
-	static RecordId getDataRecordId(BTreePage p, int slot, String dataFileName) {
+	private static RecordId getDataRecordId(BTreePage p, int slot, String dataFileName) {
 		long blkNum = (Long) p.getVal(slot, SCH_RID_BLOCK).asJavaVal();
 		int id = (Integer) p.getVal(slot, SCH_RID_ID).asJavaVal();
 		return new RecordId(new BlockId(dataFileName, blkNum), id);
 	}
 	
-	private static BTreeKey getKey(BTreePage p, int slot, int numOfFlds) {
-		List<Constant> valsOfKey = new LinkedList<Constant>();
-		for (int i = 0; i < numOfFlds; i++)
-			valsOfKey.add(p.getVal(slot, getKeyFldName(i)));
-		return new BTreeKey(valsOfKey);
+	private static SearchKey getKey(BTreePage page, int slot, int numOfFlds) {
+		return new SearchKey(new BTreeKeyReader(page, slot, numOfFlds), numOfFlds);
 	}
 	
 	// Data
 	private Schema schema;
 	private String dataFileName;
-	private List<Type> keyTypes;
-	private List<ConstantRange> searchRanges;
+	private SearchKeyType keyType;
+	private SearchRange searchRange;
 	private int numOfFlds;
 	
 	// Transaction related
@@ -183,13 +176,13 @@ public class BTreeLeaf {
 	 */
 	// TODO: Why should we provide this API ?
 	// TODO: Check why should we keep keyTypes ?
-	public BTreeLeaf(String dataFileName, BlockId blk, List<Type> keyTypes,
-			List<ConstantRange> searchRanges, Transaction tx) {
+	public BTreeLeaf(String dataFileName, BlockId blk, SearchKeyType keyType,
+			SearchRange searchRange, Transaction tx) {
 		this.dataFileName = dataFileName;
-		this.schema = schema(keyTypes);
-		this.keyTypes = keyTypes;
-		this.numOfFlds = keyTypes.size();
-		this.searchRanges = searchRanges;
+		this.schema = schema(keyType);
+		this.keyType = keyType;
+		this.numOfFlds = keyType.getNumOfFields();
+		this.searchRange = searchRange;
 		this.tx = tx;
 		this.currentPage = new BTreePage(blk, NUM_FLAGS, schema, tx);
 		ccMgr = tx.concurrencyMgr();
@@ -205,11 +198,11 @@ public class BTreeLeaf {
 	 * @param blkNum
 	 * @param tx
 	 */
-	private BTreeLeaf(String indexFileName, List<Type> keyTypes, long blkNum, Transaction tx) {
+	private BTreeLeaf(String indexFileName, SearchKeyType keyType, long blkNum, Transaction tx) {
 		this.dataFileName = null;
-		this.schema = schema(keyTypes);
-		this.keyTypes = keyTypes;
-		this.searchRanges = null;
+		this.schema = schema(keyType);
+		this.keyType = keyType;
+		this.searchRange = null;
 		this.tx = tx;
 		this.currentPage = new BTreePage(new BlockId(indexFileName, blkNum),
 				NUM_FLAGS, schema, tx);
@@ -239,7 +232,7 @@ public class BTreeLeaf {
 				}
 				return false;
 			// if the keys of this slot match what we want
-			} else if (getKey(currentPage, currentSlot, numOfFlds).compareTo(searchRanges) == 0) {
+			} else if (getKey(currentPage, currentSlot, numOfFlds).compareTo(searchRange) == 0) {
 				/*
 				 * Move to records in overflow blocks first. An overflow block
 				 * cannot be empty.
@@ -289,15 +282,11 @@ public class BTreeLeaf {
 	public DirEntry insert(RecordId dataRecordId) {
 		try {
 			// search range must be a constant
-			if (!isSearchRangesConstants())
+			if (!searchRange.isEqualitySearch())
 				throw new IllegalStateException();
 
 			// Create the key for the inserted record
-			List<Constant> searchConstants = new LinkedList<Constant>();
-			for (ConstantRange range : searchRanges) {
-				searchConstants.add(range.asConstant());
-			}
-			BTreeKey insertedKey = new BTreeKey(searchConstants);
+			SearchKey insertedKey = searchRange.toSearchKey();
 			
 			// Insert the record
 			// TODO: Check if we need this
@@ -312,7 +301,7 @@ public class BTreeLeaf {
 			 * overflow blocks.
 			 */
 			if (currentSlot == 0 && getOverflowFlag(currentPage) != -1 && !getKey(currentPage, 1, numOfFlds).equals(insertedKey)) {
-				BTreeKey splitKey = getKey(currentPage, 1, numOfFlds);
+				SearchKey splitKey = getKey(currentPage, 1, numOfFlds);
 				long newBlkNum = currentPage.split(1,
 						new long[] { getOverflowFlag(currentPage), getSiblingFlag(currentPage) });
 				setOverflowFlag(currentPage, -1);
@@ -328,8 +317,8 @@ public class BTreeLeaf {
 			 * If block is full, then split the block and return the directory
 			 * entry for the new block.
 			 */
-			BTreeKey firstKey = getKey(currentPage, 0, numOfFlds);
-			BTreeKey lastKey = getKey(currentPage, currentPage.getNumRecords() - 1, numOfFlds);
+			SearchKey firstKey = getKey(currentPage, 0, numOfFlds);
+			SearchKey lastKey = getKey(currentPage, currentPage.getNumRecords() - 1, numOfFlds);
 			if (lastKey.equals(firstKey)) {
 				/*
 				 * If all of the records in the page have the same key, then the
@@ -343,7 +332,7 @@ public class BTreeLeaf {
 				return null;
 			} else {
 				int splitPos = currentPage.getNumRecords() / 2;
-				BTreeKey splitKey = getKey(currentPage, splitPos, numOfFlds);
+				SearchKey splitKey = getKey(currentPage, splitPos, numOfFlds);
 				// records having the same key must be in the same block
 				if (splitKey.equals(firstKey)) {
 					// move right, looking for the next key
@@ -376,7 +365,7 @@ public class BTreeLeaf {
 	public void delete(RecordId dataRecordId) {
 		try {
 			// search range must be a constant
-			if (!isSearchRangesConstants())
+			if (!searchRange.isEqualitySearch())
 				throw new IllegalStateException();
 
 			// delete all entry with the specific key
@@ -444,7 +433,7 @@ public class BTreeLeaf {
 	 * the specified search range.
 	 * 
 	 * Possible optimization: comparing the constants on the page directly,
-	 * instead of translating them to a {@link BTreeKey} then comparing
+	 * instead of translating them to a {@link SearchKey} then comparing
 	 */
 	private void moveSlotBefore() {
 		// Old Design: Sequential search
@@ -458,7 +447,7 @@ public class BTreeLeaf {
 
 		if (endSlot >= 0) {
 			while (middleSlot != startSlot) {
-				if (getKey(currentPage, middleSlot, numOfFlds).compareTo(searchRanges) < 0)
+				if (getKey(currentPage, middleSlot, numOfFlds).compareTo(searchRange) < 0)
 					startSlot = middleSlot;
 				else
 					endSlot = middleSlot;
@@ -466,9 +455,9 @@ public class BTreeLeaf {
 				middleSlot = (startSlot + endSlot) / 2;
 			}
 
-			if (getKey(currentPage, endSlot, numOfFlds).compareTo(searchRanges) < 0)
+			if (getKey(currentPage, endSlot, numOfFlds).compareTo(searchRange) < 0)
 				currentSlot = endSlot;
-			else if (getKey(currentPage, startSlot, numOfFlds).compareTo(searchRanges) < 0)
+			else if (getKey(currentPage, startSlot, numOfFlds).compareTo(searchRange) < 0)
 				currentSlot = startSlot;
 			else
 				currentSlot = startSlot - 1;
@@ -494,35 +483,23 @@ public class BTreeLeaf {
 		currentSlot = slot;
 	}
 	
-	private void insert(int slot, BTreeKey key, RecordId rid) {
+	private void insert(int slot, SearchKey key, RecordId rid) {
 		// Insert an entry to the page
-		tx.recoveryMgr().logIndexPageInsertion(currentPage.currentBlk().fileName(), false, keyTypes,
+		tx.recoveryMgr().logIndexPageInsertion(currentPage.currentBlk().fileName(), false, keyType,
 				currentPage.currentBlk().number(), slot);
 		currentPage.insert(slot);
 		
 		// Set the contents
-		int count = 0;
-		Iterator<Constant> keyIter = key.getIterator();
-		while (keyIter.hasNext()) {
-			currentPage.setVal(slot, getKeyFldName(count), keyIter.next());
-			count++;
-		}
+		for (int i = 0; i < numOfFlds; i++)
+			currentPage.setVal(slot, BTreeKeyReader.getKeyFldName(i), key.get(i));
 		currentPage.setVal(slot, SCH_RID_BLOCK, new BigIntConstant(rid.block().number()));
 		currentPage.setVal(slot, SCH_RID_ID, new IntegerConstant(rid.id()));
 	}
 	
 	private void delete(int slot) {
 		// Delete an entry of the page
-		tx.recoveryMgr().logIndexPageDeletion(currentPage.currentBlk().fileName(), false, keyTypes,
+		tx.recoveryMgr().logIndexPageDeletion(currentPage.currentBlk().fileName(), false, keyType,
 				currentPage.currentBlk().number(), slot);
 		currentPage.delete(slot);
-	}
-	
-	private boolean isSearchRangesConstants() {
-		for (ConstantRange range : searchRanges) {
-			if (!range.isConstant())
-				return false;
-		}
-		return true;
 	}
 }
