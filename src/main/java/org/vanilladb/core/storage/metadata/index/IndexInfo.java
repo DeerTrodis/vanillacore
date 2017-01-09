@@ -22,6 +22,7 @@ import org.vanilladb.core.server.VanillaDb;
 import org.vanilladb.core.sql.Type;
 import org.vanilladb.core.storage.index.Index;
 import org.vanilladb.core.storage.index.IndexType;
+import org.vanilladb.core.storage.index.SearchKeyType;
 import org.vanilladb.core.storage.metadata.TableInfo;
 import org.vanilladb.core.storage.metadata.TableNotFoundException;
 import org.vanilladb.core.storage.tx.Transaction;
@@ -71,7 +72,7 @@ public class IndexInfo {
 		for (String fldName : fldNames)
 			keyTypes.add(ti.schema().type(fldName));
 		
-		return Index.newInstance(this, keyTypes, tx);
+		return Index.newInstance(this, new SearchKeyType(keyTypes), tx);
 	}
 
 	/**

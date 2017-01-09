@@ -21,7 +21,6 @@ import static org.vanilladb.core.sql.Type.VARCHAR;
 
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Map;
 
 import org.vanilladb.core.server.VanillaDb;
 import org.vanilladb.core.sql.BigIntConstant;
@@ -97,33 +96,26 @@ public class IndexInsertEndRecord extends LogicalEndRecord implements LogRecord 
 
 	@Override
 	public void undo(Transaction tx) {
-
-		Map<String, IndexInfo> iiMap = VanillaDb.catalogMgr().getIndexInfo(tblName, tx);
-		BlockId blk = new BlockId(tblName + ".tbl", recordBlockNum);
-		RecordId rid = new RecordId(blk, recordSlotId);
-		IndexInfo ii = iiMap.get(fldName);
+		IndexInfo ii = VanillaDb.catalogMgr().getIndexInfo(idxName, tx);
 		if (ii != null) {
 			Index idx = ii.open(tx);
-			idx.delete(searchKey, rid, false);
+			idx.delete(searchKey, recordId, false);
 			idx.close();
 		}
 		// Append a Logical Abort log at the end of the LogRecords
 		LogSeqNum lsn = tx.recoveryMgr().logLogicalAbort(this.txNum, this.logicalStartLSN);
 		VanillaDb.logMgr().flush(lsn);
-
 	}
 
 	/**
-	 * Logical Record should not be redo since it would not do the same physical
+	 * Logical Record should not be redone since it would not do the same physical
 	 * operations as the time it terminated.
 	 * 
 	 * @see LogRecord#redo(Transaction)
 	 */
 	@Override
 	public void redo(Transaction tx) {
-
 		// do nothing
-
 	}
 
 	@Override

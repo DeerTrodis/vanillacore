@@ -66,6 +66,8 @@ public class IndexMgr {
 	// Optimization: Materialize the index information
 	// Table Name -> (Field Name -> List of IndexInfos which uses the field)
 	private Map<String, Map<String, List<IndexInfo>>> iiMap;
+	// Index Name -> IndexInfo
+	private Map<String, IndexInfo> idxNameMap;
 
 	/**
 	 * Creates the index manager. This constructor is called during system
@@ -94,6 +96,7 @@ public class IndexMgr {
 		kti = tblMgr.getTableInfo(KCAT, tx);
 
 		iiMap = new HashMap<String, Map<String, List<IndexInfo>>>();
+		idxNameMap = new HashMap<String, IndexInfo>();
 	}
 
 	/**
@@ -211,5 +214,48 @@ public class IndexMgr {
 		iiMap.put(tblName, fldToIndexMap);
 		
 		return fldToIndexMap.get(fldName);
+	}
+	
+	public IndexInfo getIndexInfo(String idxName, Transaction tx) {
+		IndexInfo ii = idxNameMap.get(idxName);
+		if (ii != null)
+			return ii;
+		
+		// The information for an IndexInfo
+		String tblName = null;
+		List<String> fldNames = new LinkedList<String>();
+		IndexType idxType = IndexType.BTREE;
+		
+		// Retrieve the index names and types
+		RecordFile rf = iti.open(tx, true);
+		rf.beforeFirst();
+		while (rf.next())
+			if (((String) rf.getVal(ICAT_IDXNAME).asJavaVal()).equals(idxName)) {
+				tblName = (String) rf.getVal(ICAT_TBLNAME).asJavaVal();
+				int idxTypeNum = (Integer) rf.getVal(ICAT_IDXTYPE).asJavaVal();
+				idxType = IndexType.fromInteger(idxTypeNum);
+				break;
+			}
+		rf.close();
+		
+		// Retrieve the names of keys
+		rf = kti.open(tx, true);
+		rf.beforeFirst();
+		while (rf.next()) {
+			if (((String) rf.getVal(KCAT_IDXNAME).asJavaVal()).equals(idxName))
+				fldNames.add((String) rf.getVal(KCAT_KEYNAME).asJavaVal());
+		}
+		
+		/*
+		 * Optimization: store the ii. WARNING: if allowing run-time index
+		 * schema modification, this opt should be aware of the changing.
+		 */
+		if (tblName != null) {
+			ii = new IndexInfo(idxName, tblName, fldNames, idxType);
+			idxNameMap.put(idxName, ii);
+			// TODO: Add this IndexInfo to iiMap
+		}
+		
+		return ii;
 	}
 }

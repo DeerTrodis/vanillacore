@@ -55,7 +55,11 @@ public class CatalogMgr {
 		idxMgr.createIndex(idxName, tblName, fldNames, idxType, tx);
 	}
 
-	public List<IndexInfo> getIndexInfo(String tblName, String fldName, Transaction tx) {
+	public List<IndexInfo> getIndexInfos(String tblName, String fldName, Transaction tx) {
 		return idxMgr.getIndexInfo(tblName, fldName, tx);
+	}
+	
+	public IndexInfo getIndexInfo(String idxName, Transaction tx) {
+		return idxMgr.getIndexInfo(idxName, tx);
 	}
 }
