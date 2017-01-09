@@ -15,16 +15,13 @@
  ******************************************************************************/
 package org.vanilladb.core.storage.index.btree;
 
-import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.ListIterator;
 
 import org.vanilladb.core.server.VanillaDb;
 import org.vanilladb.core.sql.Constant;
-import org.vanilladb.core.sql.ConstantRange;
 import org.vanilladb.core.sql.Schema;
-import org.vanilladb.core.sql.Type;
 import org.vanilladb.core.storage.buffer.Buffer;
 import org.vanilladb.core.storage.file.BlockId;
 import org.vanilladb.core.storage.index.Index;
@@ -201,8 +198,8 @@ public class BTreeIndex extends Index {
 		
 		// log the logical operation ends
 		if (doLogicalLogging)
-			tx.recoveryMgr().logIndexInsertionEnd(ii.tableName(), ii.fieldNames(),
-					key, dataRecordId.block().number(), dataRecordId.id());
+			tx.recoveryMgr().logIndexInsertionEnd(ii.indexName(), key, 
+					dataRecordId.block().number(), dataRecordId.id());
 	}
 
 	/**
@@ -228,8 +225,8 @@ public class BTreeIndex extends Index {
 		
 		// log the logical operation ends
 		if (doLogicalLogging)
-			tx.recoveryMgr().logIndexDeletionEnd(ii.tableName(), ii.fieldNames(),
-					key, dataRecordId.block().number(), dataRecordId.id());
+			tx.recoveryMgr().logIndexDeletionEnd(ii.indexName(), key, 
+					dataRecordId.block().number(), dataRecordId.id());
 	}
 
 	/**

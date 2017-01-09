@@ -31,6 +31,7 @@ import org.vanilladb.core.sql.Type;
 import org.vanilladb.core.sql.VarcharConstant;
 import org.vanilladb.core.storage.file.BlockId;
 import org.vanilladb.core.storage.index.Index;
+import org.vanilladb.core.storage.index.SearchKey;
 import org.vanilladb.core.storage.log.BasicLogRecord;
 import org.vanilladb.core.storage.log.LogSeqNum;
 import org.vanilladb.core.storage.metadata.index.IndexInfo;
@@ -39,16 +40,15 @@ import org.vanilladb.core.storage.tx.Transaction;
 
 public class IndexDeleteEndRecord extends LogicalEndRecord implements LogRecord {
 	private long txNum, recordBlockNum;
-	private String tblName, fldName;
-	private Constant searchKey;
+	private String idxName;
+	private SearchKey searchKey;
 	private int recordSlotId;
 	private LogSeqNum lsn;
 
-	public IndexDeleteEndRecord(long txNum, String tblName, String fldName, Constant searchKey, long recordBlockNum,
+	public IndexDeleteEndRecord(long txNum, String idxName, SearchKey searchKey, long recordBlockNum,
 			int recordSlotId, LogSeqNum logicalStartLSN) {
 		this.txNum = txNum;
-		this.tblName = tblName;
-		this.fldName = fldName;
+		this.idxName = idxName;
 		this.searchKey = searchKey;
 		this.recordBlockNum = recordBlockNum;
 		this.recordSlotId = recordSlotId;
@@ -59,8 +59,7 @@ public class IndexDeleteEndRecord extends LogicalEndRecord implements LogRecord 
 
 	public IndexDeleteEndRecord(BasicLogRecord rec) {
 		txNum = (Long) rec.nextVal(BIGINT).asJavaVal();
-		tblName = (String) rec.nextVal(VARCHAR).asJavaVal();
-		fldName = (String) rec.nextVal(VARCHAR).asJavaVal();
+		idxName = (String) rec.nextVal(VARCHAR).asJavaVal();
 		int keyType = (Integer) rec.nextVal(INTEGER).asJavaVal();
 		searchKey = rec.nextVal(Type.newInstance(keyType));
 		recordBlockNum = (Long) rec.nextVal(BIGINT).asJavaVal();
@@ -118,7 +117,7 @@ public class IndexDeleteEndRecord extends LogicalEndRecord implements LogRecord 
 
 	@Override
 	public String toString() {
-		return "<INDEX DELETE END " + txNum + " " + tblName + " " + fldName + " " + searchKey.getType().getSqlType()
+		return "<INDEX DELETE END " + txNum + " " + idxName + " " + searchKey.getType().getSqlType()
 				+ " " + recordBlockNum + " " + recordSlotId + " " + super.logicalStartLSN + ">";
 	}
 
@@ -127,8 +126,7 @@ public class IndexDeleteEndRecord extends LogicalEndRecord implements LogRecord 
 		List<Constant> rec = new LinkedList<Constant>();
 		rec.add(new IntegerConstant(op()));
 		rec.add(new BigIntConstant(txNum));
-		rec.add(new VarcharConstant(tblName));
-		rec.add(new VarcharConstant(fldName));
+		rec.add(new VarcharConstant(idxName));
 		rec.add(new IntegerConstant(searchKey.getType().getSqlType()));
 		rec.add(searchKey);
 		rec.add(new BigIntConstant(recordBlockNum));

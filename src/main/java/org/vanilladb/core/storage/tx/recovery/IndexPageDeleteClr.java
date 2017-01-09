@@ -22,7 +22,7 @@ import java.util.List;
 import org.vanilladb.core.sql.BigIntConstant;
 import org.vanilladb.core.sql.Constant;
 import org.vanilladb.core.sql.IntegerConstant;
-import org.vanilladb.core.sql.Type;
+import org.vanilladb.core.storage.index.SearchKeyType;
 import org.vanilladb.core.storage.log.BasicLogRecord;
 import org.vanilladb.core.storage.log.LogSeqNum;
 import org.vanilladb.core.storage.tx.Transaction;
@@ -30,7 +30,7 @@ import org.vanilladb.core.storage.tx.Transaction;
 public class IndexPageDeleteClr extends IndexPageDeleteRecord implements CompesationLogRecord {
 	private LogSeqNum undoNextLSN;
 
-	public IndexPageDeleteClr(long txNum, String indexName, boolean isDirPage, Type keyType, long blkNum, int slotId,
+	public IndexPageDeleteClr(long txNum, String indexName, boolean isDirPage, SearchKeyType keyType, long blkNum, int slotId,
 			LogSeqNum undoNextLSN) {
 		super(txNum, indexName, isDirPage, keyType, blkNum, slotId);
 		this.undoNextLSN = undoNextLSN;

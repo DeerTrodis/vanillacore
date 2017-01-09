@@ -30,6 +30,7 @@ import org.vanilladb.core.sql.Type;
 import org.vanilladb.core.sql.VarcharConstant;
 import org.vanilladb.core.storage.buffer.Buffer;
 import org.vanilladb.core.storage.file.BlockId;
+import org.vanilladb.core.storage.index.SearchKeyType;
 import org.vanilladb.core.storage.index.btree.BTreeDir;
 import org.vanilladb.core.storage.index.btree.BTreeLeaf;
 import org.vanilladb.core.storage.log.BasicLogRecord;
@@ -41,11 +42,11 @@ public class IndexPageInsertRecord implements LogRecord {
 	private String indexName;
 	private int slotId;
 	private boolean isDirPage;
-	private Type keyType;
+	private SearchKeyType keyType;
 	private LogSeqNum lsn;
 
 	public IndexPageInsertRecord(long txNum, String indexName,
-			Boolean isDirPage, Type keyType, long blkNum, int slotId) {
+			Boolean isDirPage, SearchKeyType keyType, long blkNum, int slotId) {
 		this.txNum = txNum;
 		this.indexName = indexName;
 		this.isDirPage = isDirPage;

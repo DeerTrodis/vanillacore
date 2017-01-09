@@ -18,14 +18,10 @@ package org.vanilladb.core.storage.index.btree;
 import static org.vanilladb.core.sql.Type.BIGINT;
 
 import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.LinkedList;
 import java.util.List;
 
 import org.vanilladb.core.sql.BigIntConstant;
-import org.vanilladb.core.sql.Constant;
 import org.vanilladb.core.sql.Schema;
-import org.vanilladb.core.sql.Type;
 import org.vanilladb.core.storage.file.BlockId;
 import org.vanilladb.core.storage.index.SearchKey;
 import org.vanilladb.core.storage.index.SearchKeyType;
