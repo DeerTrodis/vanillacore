@@ -39,19 +39,18 @@ import org.vanilladb.core.storage.record.RecordId;
 import org.vanilladb.core.storage.tx.Transaction;
 
 public class IndexInsertEndRecord extends LogicalEndRecord implements LogRecord {
-	private long txNum, recordBlockNum;
+	private long txNum;
 	private String idxName;
 	private SearchKey searchKey;
-	private int recordSlotId;
+	private RecordId recordId;
 	private LogSeqNum lsn;
 
-	public IndexInsertEndRecord(long txNum, String idxName, SearchKey searchKey, long recordBlockNum,
-			int recordSlotId, LogSeqNum logicalStartLSN) {
+	public IndexInsertEndRecord(long txNum, String idxName, SearchKey searchKey, RecordId recordId,
+			LogSeqNum logicalStartLSN) {
 		this.txNum = txNum;
 		this.idxName = idxName;
 		this.searchKey = searchKey;
-		this.recordBlockNum = recordBlockNum;
-		this.recordSlotId = recordSlotId;
+		this.recordId = recordId;
 		super.logicalStartLSN = logicalStartLSN;
 		this.lsn = null;
 
@@ -70,8 +69,11 @@ public class IndexInsertEndRecord extends LogicalEndRecord implements LogRecord 
 		}
 		searchKey = new SearchKey(vals);
 		
-		recordBlockNum = (Long) rec.nextVal(BIGINT).asJavaVal();
-		recordSlotId = (Integer) rec.nextVal(INTEGER).asJavaVal();
+		String recordIdBlkFile = (String) rec.nextVal(VARCHAR).asJavaVal();
+		long recordIdBlkNum = (Long) rec.nextVal(BIGINT).asJavaVal();
+		int recordIdSlotNum = (Integer) rec.nextVal(INTEGER).asJavaVal();
+		recordId = new RecordId(new BlockId(recordIdBlkFile, recordIdBlkNum), recordIdSlotNum);
+		
 		super.logicalStartLSN = new LogSeqNum((Long) rec.nextVal(BIGINT).asJavaVal(),
 				(Long) rec.nextVal(BIGINT).asJavaVal());
 		lsn = rec.getLSN();
@@ -127,7 +129,7 @@ public class IndexInsertEndRecord extends LogicalEndRecord implements LogRecord 
 	@Override
 	public String toString() {
 		return "<INDEX INSERT END " + txNum + " " + idxName + " " + searchKey
-				+ " " + recordBlockNum + " " + recordSlotId + " " + super.logicalStartLSN + ">";
+				+ " " + recordId + " " + super.logicalStartLSN + ">";
 	}
 
 	@Override
@@ -144,8 +146,9 @@ public class IndexInsertEndRecord extends LogicalEndRecord implements LogRecord 
 			rec.add(searchKey.get(i));
 		}
 		
-		rec.add(new BigIntConstant(recordBlockNum));
-		rec.add(new IntegerConstant(recordSlotId));
+		rec.add(new VarcharConstant(recordId.block().fileName()));
+		rec.add(new BigIntConstant(recordId.block().number()));
+		rec.add(new IntegerConstant(recordId.id()));
 		rec.add(new BigIntConstant(super.logicalStartLSN.blkNum()));
 		rec.add(new BigIntConstant(super.logicalStartLSN.offset()));
 		return rec;

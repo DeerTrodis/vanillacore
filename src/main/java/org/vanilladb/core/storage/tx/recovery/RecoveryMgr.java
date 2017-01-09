@@ -33,6 +33,7 @@ import org.vanilladb.core.storage.file.BlockId;
 import org.vanilladb.core.storage.index.SearchKey;
 import org.vanilladb.core.storage.index.SearchKeyType;
 import org.vanilladb.core.storage.log.LogSeqNum;
+import org.vanilladb.core.storage.record.RecordId;
 import org.vanilladb.core.storage.tx.Transaction;
 import org.vanilladb.core.storage.tx.TransactionLifecycleListener;
 
@@ -202,14 +203,13 @@ public class RecoveryMgr implements TransactionLifecycleListener {
 	}
 
 	public LogSeqNum logIndexInsertionEnd(String idxName, SearchKey searchKey, 
-			long recordBlockNum, int recordSlotId) {
+			RecordId recordId) {
 		if (enableLogging) {
 			if (this.logicalStartLSN == null)
 				throw new RuntimeException(
 						"Logical start LSN is null (in logIndexInsertionEnd)");
 			LogSeqNum lsn = new IndexInsertEndRecord(txNum, idxName,
-					searchKey, recordBlockNum, recordSlotId,
-					this.logicalStartLSN).writeToLog();
+					searchKey, recordId, this.logicalStartLSN).writeToLog();
 			this.logicalStartLSN = null;
 			return lsn;
 		} else
@@ -217,14 +217,13 @@ public class RecoveryMgr implements TransactionLifecycleListener {
 	}
 
 	public LogSeqNum logIndexDeletionEnd(String idxName, SearchKey searchKey, 
-			long recordBlockNum, int recordSlotId) {
+			RecordId recordId) {
 		if (enableLogging) {
 			if (this.logicalStartLSN == null)
 				throw new RuntimeException(
 						"Logical start LSN is null (in logIndexDeletionEnd)");
 			LogSeqNum lsn = new IndexDeleteEndRecord(txNum, idxName,
-					searchKey, recordBlockNum, recordSlotId,
-					this.logicalStartLSN).writeToLog();
+					searchKey, recordId, this.logicalStartLSN).writeToLog();
 			this.logicalStartLSN = null;
 			return lsn;
 		} else

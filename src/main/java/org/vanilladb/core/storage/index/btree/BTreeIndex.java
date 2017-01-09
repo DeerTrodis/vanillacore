@@ -198,8 +198,7 @@ public class BTreeIndex extends Index {
 		
 		// log the logical operation ends
 		if (doLogicalLogging)
-			tx.recoveryMgr().logIndexInsertionEnd(ii.indexName(), key, 
-					dataRecordId.block().number(), dataRecordId.id());
+			tx.recoveryMgr().logIndexInsertionEnd(ii.indexName(), key, dataRecordId);
 	}
 
 	/**
@@ -225,8 +224,7 @@ public class BTreeIndex extends Index {
 		
 		// log the logical operation ends
 		if (doLogicalLogging)
-			tx.recoveryMgr().logIndexDeletionEnd(ii.indexName(), key, 
-					dataRecordId.block().number(), dataRecordId.id());
+			tx.recoveryMgr().logIndexDeletionEnd(ii.indexName(), key, dataRecordId);
 	}
 
 	/**
