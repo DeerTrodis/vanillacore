@@ -60,8 +60,16 @@ public class IndexInsertEndRecord extends LogicalEndRecord implements LogRecord 
 	public IndexInsertEndRecord(BasicLogRecord rec) {
 		txNum = (Long) rec.nextVal(BIGINT).asJavaVal();
 		idxName = (String) rec.nextVal(VARCHAR).asJavaVal();
-		int keyType = (Integer) rec.nextVal(INTEGER).asJavaVal();
-		searchKey = rec.nextVal(Type.newInstance(keyType));
+
+		// num_of_flds (type1, val1, type2, val2 ... typeN, valN)
+		List<Constant> vals = new LinkedList<Constant>();
+		int numOfFlds = (Integer) rec.nextVal(INTEGER).asJavaVal();
+		for (int i = 0; i < numOfFlds; i++) {
+			int keyType = (Integer) rec.nextVal(INTEGER).asJavaVal();
+			vals.add(rec.nextVal(Type.newInstance(keyType)));
+		}
+		searchKey = new SearchKey(vals);
+		
 		recordBlockNum = (Long) rec.nextVal(BIGINT).asJavaVal();
 		recordSlotId = (Integer) rec.nextVal(INTEGER).asJavaVal();
 		super.logicalStartLSN = new LogSeqNum((Long) rec.nextVal(BIGINT).asJavaVal(),
@@ -118,7 +126,7 @@ public class IndexInsertEndRecord extends LogicalEndRecord implements LogRecord 
 
 	@Override
 	public String toString() {
-		return "<INDEX INSERT END " + txNum + " " + idxName + " " + searchKey.getType().getSqlType()
+		return "<INDEX INSERT END " + txNum + " " + idxName + " " + searchKey
 				+ " " + recordBlockNum + " " + recordSlotId + " " + super.logicalStartLSN + ">";
 	}
 
@@ -128,8 +136,14 @@ public class IndexInsertEndRecord extends LogicalEndRecord implements LogRecord 
 		rec.add(new IntegerConstant(op()));
 		rec.add(new BigIntConstant(txNum));
 		rec.add(new VarcharConstant(idxName));
-		rec.add(new IntegerConstant(searchKey.getType().getSqlType()));
-		rec.add(searchKey);
+		
+		// num_of_flds (type1, val1, type2, val2 ... typeN, valN)
+		rec.add(new IntegerConstant(searchKey.getNumOfFields()));
+		for (int i = 0; i < searchKey.getNumOfFields(); i++) {
+			rec.add(new IntegerConstant(searchKey.get(i).getType().getSqlType()));
+			rec.add(searchKey.get(i));
+		}
+		
 		rec.add(new BigIntConstant(recordBlockNum));
 		rec.add(new IntegerConstant(recordSlotId));
 		rec.add(new BigIntConstant(super.logicalStartLSN.blkNum()));

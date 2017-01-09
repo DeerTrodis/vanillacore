@@ -61,7 +61,14 @@ public class IndexPageInsertRecord implements LogRecord {
 		txNum = (Long) rec.nextVal(BIGINT).asJavaVal();
 		indexName = (String) rec.nextVal(VARCHAR).asJavaVal();
 		isDirPage = (Integer) rec.nextVal(INTEGER).asJavaVal() == 1;
-		keyType = Type.newInstance((Integer) rec.nextVal(INTEGER).asJavaVal());
+		
+		// num_of_flds (type1, type2 ... typeN)
+		List<Type> types = new LinkedList<Type>();
+		int numOfFlds = (Integer) rec.nextVal(INTEGER).asJavaVal();
+		for (int i = 0; i < numOfFlds; i++)
+			types.add(Type.newInstance((Integer) rec.nextVal(INTEGER).asJavaVal()));
+		keyType = new SearchKeyType(types);
+		
 		blkNum = (Long) rec.nextVal(BIGINT).asJavaVal();
 		slotId = (Integer) rec.nextVal(INTEGER).asJavaVal();
 		lsn = rec.getLSN();
@@ -147,7 +154,7 @@ public class IndexPageInsertRecord implements LogRecord {
 	@Override
 	public String toString() {
 		return "<INDEX PAGE INSERT " + txNum + " " + indexName + " "
-				+ isDirPage + " " + keyType.getSqlType() + " " + blkNum + " "
+				+ isDirPage + " " + keyType + " " + blkNum + " "
 				+ slotId + ">";
 	}
 
@@ -159,7 +166,12 @@ public class IndexPageInsertRecord implements LogRecord {
 		rec.add(new VarcharConstant(indexName));
 		// Covert Boolean into int
 		rec.add(new IntegerConstant(isDirPage ? 1 : 0));
-		rec.add(new IntegerConstant(keyType.getSqlType()));
+		
+		// num_of_flds (type1, type2 ... typeN)
+		rec.add(new IntegerConstant(keyType.getNumOfFields()));
+		for (int i = 0; i < keyType.getNumOfFields(); i++)
+			rec.add(new IntegerConstant(keyType.get(i).getSqlType()));
+
 		rec.add(new BigIntConstant(blkNum));
 		rec.add(new IntegerConstant(slotId));
 		return rec;
@@ -167,7 +179,6 @@ public class IndexPageInsertRecord implements LogRecord {
 
 	@Override
 	public LogSeqNum getLSN() {
-
 		return lsn;
 	}
 

@@ -47,4 +47,16 @@ public class SearchKeyType {
 			
 		}, types.length);
 	}
+	
+	@Override
+	public String toString() {
+		StringBuilder sb = new StringBuilder('(');
+		for (Type t : types) {
+			sb.append(t);
+			sb.append(", ");
+		}
+		sb.delete(sb.length() - 2, sb.length());
+		sb.append(')');
+		return sb.toString();
+	}
 }

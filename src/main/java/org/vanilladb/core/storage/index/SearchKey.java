@@ -99,4 +99,16 @@ public class SearchKey {
 //		SearchKey targetKey = (SearchKey) o;
 //		return this.compareTo(targetKey) == 0;
 //	}
+	
+	@Override
+	public String toString() {
+		StringBuilder sb = new StringBuilder('(');
+		for (Constant v : vals) {
+			sb.append(v);
+			sb.append(", ");
+		}
+		sb.delete(sb.length() - 2, sb.length());
+		sb.append(')');
+		return sb.toString();
+	}
 }
